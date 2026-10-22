@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 )
 
-// The output contract is documented in docs/output-safety.md. In short:
+// The output contract, including what holds after a crash and on Windows or
+// network filesystems, is documented in docs/output-safety.md. In short:
 //
 //   - The input is never written: an output path that resolves to the input
 //     file (same path, another path, a symlink or a hard link to it) is refused.
@@ -17,9 +18,11 @@ import (
 //     symlink is never replaced, even if it appears after any check.
 //   - With -force the data is written to a temporary file in the destination
 //     directory, synced, closed and then renamed over the destination. The
-//     destination is never deleted first, so a failure leaves it unchanged.
+//     destination is never deleted or truncated, so a reported failure leaves
+//     it unchanged.
 //   - Every write, sync, close, rename and cleanup error is reported, and a
-//     file left incomplete by a handled failure is removed.
+//     file left incomplete by a reported failure is removed. Nothing is
+//     cleaned up if the process is killed.
 
 // outputPerm is the mode of a new output file. NFC files contain sector keys,
 // so only the owner may read them. On Windows only the owner-write bit is used
@@ -124,8 +127,8 @@ func replaceFile(ops fileOps, name string, data []byte) error {
 	return nil
 }
 
-// writeAndClose writes data, flushes it to stable storage and closes f. The
-// file is closed even when writing or syncing fails.
+// writeAndClose writes data, asks the OS to flush it to storage (File.Sync)
+// and closes f. The file is closed even when writing or syncing fails.
 func writeAndClose(f outputFile, data []byte) error {
 	n, err := f.Write(data)
 	if err == nil && n < len(data) {
