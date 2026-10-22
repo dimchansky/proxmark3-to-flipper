@@ -1,0 +1,145 @@
+# Creates a DRAFT GitHub release for a version tag. It never publishes: a
+# person reviews the draft and publishes it by hand (see the release checklist
+# in issue #6).
+#
+#   1. preflight: the tag is SemVer, points at a commit on main that passed
+#      CI Required, and has no release yet (read-only token).
+#   2. build: build-release.yml builds, verifies and smoke-tests the archives
+#      (read-only token).
+#   3. publish: uploads exactly the verified files to a new draft release. It
+#      is the only job with write access and runs no repository code.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      commit: ${{ steps.check.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the tag, its commit and existing releases
+        id: check
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+          [[ "$GITHUB_REF_TYPE" == tag && "$TAG" =~ $semver ]] || fail "$TAG is not a vMAJOR.MINOR.PATCH[-PRERELEASE] tag"
+
+          commit="$(git rev-parse "refs/tags/$TAG^{commit}")" || fail "$TAG does not resolve to a commit"
+          [[ "$(git rev-parse HEAD)" == "$commit" ]] || fail "checkout is not at $TAG"
+          [[ -z "$(git status --porcelain)" ]] || fail "the checkout is not clean"
+
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$commit" FETCH_HEAD || fail "$commit is not on main"
+
+          ci="$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit/check-runs?check_name=CI%20Required" \
+            --jq '[.check_runs[] | select(.app.slug == "github-actions")] | sort_by(.completed_at) | last | .conclusion // "missing"')"
+          [[ "$ci" == success ]] || fail "CI Required on $commit is '$ci', not 'success'"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            fail "a release for $TAG already exists"
+          fi
+
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "$TAG -> $commit on main, CI Required passed, no release yet"
+
+  build:
+    name: Build
+    needs: preflight
+    uses: ./.github/workflows/build-release.yml
+    with:
+      tag: ${{ github.ref_name }}
+    permissions:
+      contents: read
+
+  publish:
+    name: Create the draft release
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Configure deployment protection for this environment in the repository
+    # settings (allowed tags v*, and optionally the maintainer as reviewer).
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Download the verified files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Check the files again
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ needs.preflight.outputs.commit }}
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          sha256sum --check --strict ./*_checksums.txt
+          [[ "$(jq -r .tag metadata.json)" == "$TAG" && "$(jq -r .commit metadata.json)" == "$COMMIT" ]] \
+            || { echo "::error::metadata.json does not match $TAG at $COMMIT"; exit 1; }
+          archives=(./*.tar.gz ./*.zip)
+          [[ "${#archives[@]}" -eq "$(wc -l < ./*_checksums.txt)" ]] \
+            || { echo "::error::archives and checksum file disagree"; exit 1; }
+
+      - name: Create the draft release
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ needs.preflight.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The read-only preflight cannot see drafts; check again with write access.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::a release or draft for $TAG already exists; nothing was changed"
+            exit 1
+          fi
+          prerelease=()
+          [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
+          cat > notes.md <<EOF
+          DRAFT: replace this text with the reviewed release notes before publishing.
+
+          Built from commit $COMMIT. Download the archive for your system, check it
+          against \`proxmark3-to-flipper_${TAG#v}_checksums.txt\`, and see the README for
+          installation and verification.
+          EOF
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "$TAG" --notes-file notes.md "${prerelease[@]}" \
+            dist/*.tar.gz dist/*.zip dist/*_checksums.txt
+
+      - name: Check the draft
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets \
+            --jq '"draft=\(.isDraft) assets=\(.assets | length)"' | tee draft.txt
+          files=(dist/*.tar.gz dist/*.zip dist/*_checksums.txt)
+          grep -qx "draft=true assets=${#files[@]}" draft.txt \
+            || { echo "::error::the draft is not as expected"; exit 1; }
