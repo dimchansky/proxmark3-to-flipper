@@ -11,15 +11,13 @@ package main
 //	go test -tags knowndefects -run 'TestDefect' ./...
 //
 // When a defect is fixed, move its test into the default suite and delete it
-// from this file.
+// from this file. D-01, D-07 and D-13 were fixed in Task 02; their regression
+// tests are TestCLI_OutputIsInput, TestWriteOutputFile_InjectedFailures and
+// TestCLI_OutputPermissions.
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -38,17 +36,13 @@ func zeroBlocks(n int) []string {
 	return blocks
 }
 
-// convert parses a dump and renders it, returning the first error.
+// convert parses a dump and renders it.
 func convert(input string) (string, error) {
 	card, err := parseProxmark3JSON(strings.NewReader(input))
 	if err != nil {
 		return "", err
 	}
-	var buf bytes.Buffer
-	if err := writeNFC(&buf, card); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	return string(renderNFC(card)), nil
 }
 
 func expectRejected(t *testing.T, input string) {
@@ -56,21 +50,6 @@ func expectRejected(t *testing.T, input string) {
 	out, err := convert(input)
 	if err == nil {
 		t.Errorf("conversion succeeded, want an error; output starts with:\n%s", firstLines(out, 12))
-	}
-}
-
-// D-01: using the same path for input and output destroys the dump.
-func TestDefectD01_SamePathDestroysInput(t *testing.T) {
-	dir := t.TempDir()
-	in := copyFixture(t, dir, fixture1K)
-	alias := filepath.Join(dir, ".", filepath.Base(in))
-
-	res := runCLI(t, dir, "-i", in, "-o", alias)
-	if res.code == 0 {
-		t.Errorf("exit code = 0, want a failure when -i and -o name the same file")
-	}
-	if !bytes.Equal(readFile(t, in), readFile(t, fixture1K)) {
-		t.Errorf("input dump was overwritten; it now starts with:\n%s", firstLines(string(readFile(t, in)), 3))
 	}
 }
 
@@ -162,25 +141,6 @@ func TestDefectD06_CardIdentityNotValidated(t *testing.T) {
 	}
 }
 
-// D-07: only the error of the last write is returned; an earlier failed write
-// is reported as success and leaves a truncated file.
-func TestDefectD07_IntermediateWriteErrorIgnored(t *testing.T) {
-	card, err := parseProxMark3JSONFile(fixture1K)
-	if err != nil {
-		t.Fatal(err)
-	}
-	errTransient := errors.New("transient write error")
-	for _, call := range []int{1, 2, 5, 10} {
-		call := call
-		t.Run(fmt.Sprintf("write %d fails", call), func(t *testing.T) {
-			w := &faultyWriter{failFrom: call, failOnly: true, err: errTransient}
-			if err := writeNFC(w, card); !errors.Is(err, errTransient) {
-				t.Errorf("writeNFC() error = %v, want %v", err, errTransient)
-			}
-		})
-	}
-}
-
 // D-09: anything after the first JSON value is ignored.
 func TestDefectD09_TrailingDataAccepted(t *testing.T) {
 	valid := string(readFile(t, fixture1K))
@@ -217,27 +177,6 @@ func TestDefectD12_DuplicateBlockKeys(t *testing.T) {
 	valid := pm3JSON("mfcard", "11223344", "0400", "08", zeroBlocks(64), false)
 	dup := strings.Replace(valid, `"63": "`, `"5": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", "63": "`, 1)
 	expectRejected(t, dup)
-}
-
-// D-13: the output file, which contains sector keys, is created with the
-// default 0666 mode (world-readable under the usual umask 022).
-func TestDefectD13_OutputFilePermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX permission bits do not apply on Windows")
-	}
-	dir := t.TempDir()
-	in := copyFixture(t, dir, fixture1K)
-	out := filepath.Join(dir, "card.nfc")
-	if res := runCLI(t, dir, "-i", in, "-o", out); res.code != 0 {
-		t.Fatalf("exit code = %d; stderr:\n%s", res.code, res.stderr)
-	}
-	info, err := os.Stat(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		t.Errorf("output mode = %v, want no group or other access", perm)
-	}
 }
 
 // D-18: a block key that is not a decimal index is reported as a missing

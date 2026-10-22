@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
@@ -44,23 +46,30 @@ func run() error {
 		return err
 	}
 
-	card, err := parseProxMark3JSONFile(cfg.InputJSONFile)
+	card, input, err := parseProxMark3JSONFile(cfg.InputJSONFile)
 	if err != nil {
 		return err
 	}
 
-	return writeNFCFile(cfg.OutputNFCFile, card)
+	// Render before touching the output, so that only I/O can fail there.
+	data := renderNFC(card)
+	if err := checkOutputIsNotInput(input, cfg.OutputNFCFile); err != nil {
+		return err
+	}
+	return writeOutputFile(osFileOps, cfg.OutputNFCFile, data, cfg.Force)
 }
 
 type config struct {
 	InputJSONFile string
 	OutputNFCFile string
+	Force         bool
 }
 
 func parseArgs() (*config, error) {
 	var cfg config
 	flag.StringVar(&cfg.InputJSONFile, "i", "", "input Proxmark3 dump file in JSON format")
 	flag.StringVar(&cfg.OutputNFCFile, "o", "", "output Flipper file in NFC format")
+	flag.BoolVar(&cfg.Force, "force", false, "replace the output file if it already exists")
 	defaultUsage := flag.Usage
 	flag.Usage = func() {
 		defaultUsage()
@@ -86,10 +95,10 @@ func (h hexData) String() string {
 
 	n := len(h)
 	for i := 0; i < n-1; i++ {
-		sb.WriteString(fmt.Sprintf("%02X ", h[i]))
+		fmt.Fprintf(&sb, "%02X ", h[i])
 	}
 	if n >= 1 {
-		sb.WriteString(fmt.Sprintf("%02X", h[n-1]))
+		fmt.Fprintf(&sb, "%02X", h[n-1])
 	}
 
 	return sb.String()
@@ -102,14 +111,27 @@ type mifareCard struct {
 	Blocks []hexData
 }
 
-func parseProxMark3JSONFile(fileName string) (*mifareCard, error) {
+// parseProxMark3JSONFile parses the dump in fileName. It also returns the
+// identity of the file that was read, for checkOutputIsNotInput.
+func parseProxMark3JSONFile(fileName string) (*mifareCard, fs.FileInfo, error) {
 	jsonFile, err := os.Open(fileName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse Proxmark3 dump file '%s': %w", fileName, err)
+		return nil, nil, fmt.Errorf("failed to parse Proxmark3 dump file '%s': %w", fileName, err)
 	}
-	defer jsonFile.Close()
+	defer func() {
+		// The file is only read; a close error cannot affect the parsed data.
+		_ = jsonFile.Close()
+	}()
 
-	return parseProxmark3JSON(jsonFile)
+	info, err := jsonFile.Stat()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse Proxmark3 dump file '%s': %w", fileName, err)
+	}
+	card, err := parseProxmark3JSON(jsonFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	return card, info, nil
 }
 
 func parseProxmark3JSON(r io.Reader) (*mifareCard, error) {
@@ -183,26 +205,20 @@ func decodeHexData(hexStr string) (bs hexData, err error) {
 	return
 }
 
-func writeNFCFile(fileName string, c *mifareCard) error {
-	nfcFile, err := os.Create(fileName)
-	if err != nil {
-		return fmt.Errorf("failed to create NFC file '%s': %w", fileName, err)
-	}
-	defer nfcFile.Close()
-
-	return writeNFC(nfcFile, c)
-}
-
-func writeNFC(w io.Writer, c *mifareCard) error {
-	_, err := fmt.Fprintln(w, `Filetype: Flipper NFC device
+// renderNFC returns c in the Flipper NFC file format. Rendering to memory
+// cannot fail, so the output file is only touched once the content is complete.
+func renderNFC(c *mifareCard) []byte {
+	var b bytes.Buffer
+	b.WriteString(`Filetype: Flipper NFC device
 Version: 2
 # Nfc device type can be UID, Mifare Ultralight, Mifare Classic, Bank card
 Device type: Mifare Classic
-# UID, ATQA and SAK are common for all formats`)
-	_, err = fmt.Fprintf(w, "UID: %s\n", c.UID)
-	_, err = fmt.Fprintf(w, "ATQA: %s\n", c.ATQA)
-	_, err = fmt.Fprintf(w, "SAK: %s\n", c.SAK)
-	_, err = fmt.Fprintln(w, "# Mifare Classic specific data")
+# UID, ATQA and SAK are common for all formats
+`)
+	fmt.Fprintf(&b, "UID: %s\n", c.UID)
+	fmt.Fprintf(&b, "ATQA: %s\n", c.ATQA)
+	fmt.Fprintf(&b, "SAK: %s\n", c.SAK)
+	b.WriteString("# Mifare Classic specific data\n")
 	mfSize := 0
 	switch len(c.Blocks) {
 	case 64:
@@ -212,12 +228,12 @@ Device type: Mifare Classic
 	case 256:
 		mfSize = 4
 	}
-	_, err = fmt.Fprintf(w, "Mifare Classic type: %dK\n", mfSize)
-	_, err = fmt.Fprintln(w, `Data format version: 2
-# Mifare Classic blocks, '??' means unknown data`)
+	fmt.Fprintf(&b, "Mifare Classic type: %dK\n", mfSize)
+	b.WriteString(`Data format version: 2
+# Mifare Classic blocks, '??' means unknown data
+`)
 	for i, block := range c.Blocks {
-		_, err = fmt.Fprintf(w, "Block %d: %s\n", i, block)
+		fmt.Fprintf(&b, "Block %d: %s\n", i, block)
 	}
-
-	return err
+	return b.Bytes()
 }

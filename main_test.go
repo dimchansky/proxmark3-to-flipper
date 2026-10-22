@@ -74,19 +74,27 @@ func TestParseProxMark3JSONFile(t *testing.T) {
 
 	t.Run("valid file", func(t *testing.T) {
 		t.Parallel()
-		card, err := parseProxMark3JSONFile(fixture1K)
+		card, info, err := parseProxMark3JSONFile(fixture1K)
 		if err != nil {
 			t.Fatalf("parseProxMark3JSONFile(%q) error = %v", fixture1K, err)
 		}
 		if len(card.Blocks) != 64 {
 			t.Errorf("len(Blocks) = %d, want 64", len(card.Blocks))
 		}
+		// The returned identity is what the output is compared against.
+		want, err := os.Stat(fixture1K)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(info, want) {
+			t.Errorf("returned FileInfo does not identify %s", fixture1K)
+		}
 	})
 
 	t.Run("missing file", func(t *testing.T) {
 		t.Parallel()
 		name := filepath.Join(t.TempDir(), "does-not-exist.json")
-		_, err := parseProxMark3JSONFile(name)
+		_, _, err := parseProxMark3JSONFile(name)
 		if !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("parseProxMark3JSONFile(%q) error = %v, want fs.ErrNotExist", name, err)
 		}
@@ -98,7 +106,7 @@ func TestParseProxMark3JSONFile(t *testing.T) {
 	t.Run("directory instead of file", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		if _, err := parseProxMark3JSONFile(dir); err == nil {
+		if _, _, err := parseProxMark3JSONFile(dir); err == nil {
 			t.Fatalf("parseProxMark3JSONFile(%q) error = nil, want an error", dir)
 		}
 	})
@@ -314,27 +322,23 @@ func TestParseProxmark3JSON_Rejected(t *testing.T) {
 	}
 }
 
-func TestWriteNFC_Golden(t *testing.T) {
+func TestRenderNFC_Golden(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range conversionCases {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			card, err := parseProxMark3JSONFile(tt.fixture)
+			card, _, err := parseProxMark3JSONFile(tt.fixture)
 			if err != nil {
 				t.Fatalf("parse %s: %v", tt.fixture, err)
 			}
-			var buf bytes.Buffer
-			if err := writeNFC(&buf, card); err != nil {
-				t.Fatalf("writeNFC() error = %v", err)
-			}
-			assertSameText(t, tt.golden, buf.Bytes(), readFile(t, tt.golden))
+			assertSameText(t, tt.golden, renderNFC(card), readFile(t, tt.golden))
 		})
 	}
 }
 
-func TestWriteNFC_Header(t *testing.T) {
+func TestRenderNFC_Header(t *testing.T) {
 	t.Parallel()
 
 	card := &mifareCard{
@@ -347,10 +351,7 @@ func TestWriteNFC_Header(t *testing.T) {
 		card.Blocks[i] = make(hexData, 16)
 	}
 
-	var buf bytes.Buffer
-	if err := writeNFC(&buf, card); err != nil {
-		t.Fatalf("writeNFC() error = %v", err)
-	}
+	got := string(renderNFC(card))
 
 	// Flipper NFC file format version 2, MIFARE Classic data format version 2.
 	// ATQA is written in the order Proxmark3 stores it, which is the order
@@ -368,15 +369,15 @@ func TestWriteNFC_Header(t *testing.T) {
 		"Data format version: 2\n" +
 		"# Mifare Classic blocks, '??' means unknown data\n" +
 		"Block 0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00\n"
-	if got := buf.String(); !strings.HasPrefix(got, wantHeader) {
-		t.Errorf("writeNFC() header mismatch\n got: %q\nwant: %q", firstLines(got, 13), wantHeader)
+	if !strings.HasPrefix(got, wantHeader) {
+		t.Errorf("renderNFC() header mismatch\n got: %q\nwant: %q", firstLines(got, 13), wantHeader)
 	}
-	if strings.Contains(buf.String(), "\r") {
+	if strings.Contains(got, "\r") {
 		t.Error("output contains carriage returns, want LF line endings")
 	}
 }
 
-func TestWriteNFC_CardType(t *testing.T) {
+func TestRenderNFC_CardType(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -394,88 +395,34 @@ func TestWriteNFC_CardType(t *testing.T) {
 			for i := range card.Blocks {
 				card.Blocks[i] = make(hexData, 16)
 			}
-			var buf bytes.Buffer
-			if err := writeNFC(&buf, card); err != nil {
-				t.Fatalf("writeNFC() error = %v", err)
-			}
-			if !strings.Contains(buf.String(), tt.want) {
+			got := string(renderNFC(card))
+			if !strings.Contains(got, tt.want) {
 				t.Errorf("output does not contain %q", tt.want)
 			}
-			if got := strings.Count(buf.String(), "\nBlock "); got != tt.blocks {
-				t.Errorf("output has %d block lines, want %d", got, tt.blocks)
+			if n := strings.Count(got, "\nBlock "); n != tt.blocks {
+				t.Errorf("output has %d block lines, want %d", n, tt.blocks)
 			}
 		})
 	}
 }
 
-func TestWriteNFC_Deterministic(t *testing.T) {
+func TestRenderNFC_Deterministic(t *testing.T) {
 	t.Parallel()
 
-	card, err := parseProxMark3JSONFile(fixture4K)
+	card, _, err := parseProxMark3JSONFile(fixture4K)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var first bytes.Buffer
-	if err := writeNFC(&first, card); err != nil {
-		t.Fatal(err)
-	}
+	first := renderNFC(card)
 	for i := 0; i < 5; i++ {
-		again, err := parseProxMark3JSONFile(fixture4K)
+		again, _, err := parseProxMark3JSONFile(fixture4K)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var buf bytes.Buffer
-		if err := writeNFC(&buf, again); err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(first.Bytes(), buf.Bytes()) {
+		if !bytes.Equal(first, renderNFC(again)) {
 			t.Fatalf("conversion %d differs from the first conversion", i+2)
 		}
 	}
-}
-
-func TestWriteNFC_PersistentWriterError(t *testing.T) {
-	t.Parallel()
-
-	card, err := parseProxMark3JSONFile(fixture1K)
-	if err != nil {
-		t.Fatal(err)
-	}
-	errDiskFull := errors.New("disk full")
-	w := &faultyWriter{failFrom: 3, err: errDiskFull}
-	if err := writeNFC(w, card); !errors.Is(err, errDiskFull) {
-		t.Fatalf("writeNFC() error = %v, want %v", err, errDiskFull)
-	}
-}
-
-func TestWriteNFCFile(t *testing.T) {
-	t.Parallel()
-
-	card, err := parseProxMark3JSONFile(fixture1K)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Run("writes the converted card", func(t *testing.T) {
-		t.Parallel()
-		out := filepath.Join(t.TempDir(), "card.nfc")
-		if err := writeNFCFile(out, card); err != nil {
-			t.Fatalf("writeNFCFile() error = %v", err)
-		}
-		assertSameText(t, golden1K, readFile(t, out), readFile(t, golden1K))
-	})
-
-	t.Run("missing parent directory", func(t *testing.T) {
-		t.Parallel()
-		out := filepath.Join(t.TempDir(), "missing", "card.nfc")
-		err := writeNFCFile(out, card)
-		if !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("writeNFCFile() error = %v, want fs.ErrNotExist", err)
-		}
-		if !strings.Contains(err.Error(), "failed to create NFC file") {
-			t.Errorf("error = %q, want it to mention the output file", err)
-		}
-	})
 }
 
 // TestGoldenFiles checks the golden files themselves, independently of the
@@ -526,7 +473,7 @@ func TestGoldenFiles(t *testing.T) {
 }
 
 // FuzzParseProxmark3JSON checks that arbitrary input never panics the parser
-// or the writer, and that an accepted dump is written with every block.
+// or the renderer, and that an accepted dump is rendered with every block.
 func FuzzParseProxmark3JSON(f *testing.F) {
 	for _, name := range []string{fixture1K, fixture1K7, fixtureV2, fixtureMini} {
 		data, err := os.ReadFile(name)
@@ -543,32 +490,10 @@ func FuzzParseProxmark3JSON(f *testing.F) {
 		if err != nil {
 			return
 		}
-		var buf bytes.Buffer
-		if err := writeNFC(&buf, card); err != nil {
-			t.Fatalf("writeNFC() error = %v for an accepted dump", err)
-		}
-		if got := strings.Count(buf.String(), "\nBlock "); got != len(card.Blocks) {
+		if got := strings.Count(string(renderNFC(card)), "\nBlock "); got != len(card.Blocks) {
 			t.Fatalf("output has %d block lines, card has %d blocks", got, len(card.Blocks))
 		}
 	})
-}
-
-// faultyWriter fails every write starting with the failFrom-th call (1-based).
-// With failOnly set, only that single call fails.
-type faultyWriter struct {
-	failFrom int
-	failOnly bool
-	err      error
-	calls    int
-	buf      bytes.Buffer
-}
-
-func (w *faultyWriter) Write(p []byte) (int, error) {
-	w.calls++
-	if w.calls == w.failFrom || (!w.failOnly && w.calls > w.failFrom) {
-		return 0, w.err
-	}
-	return w.buf.Write(p)
 }
 
 func readFile(t *testing.T, name string) []byte {
