@@ -249,8 +249,8 @@ func TestFormatVersion(t *testing.T) {
 	}
 }
 
-// Regression tests for D-10 and D-19: usage errors exit with 2, name the
-// problem in one line followed by a hint, and create nothing.
+// Usage errors exit with 2, name the problem in one line followed by a hint,
+// and create nothing.
 func TestCLI_UsageErrors(t *testing.T) {
 	t.Parallel()
 
@@ -562,8 +562,8 @@ func TestCLI_OutputDirectoryMissing(t *testing.T) {
 	assertNoFile(t, out)
 }
 
-// Regression test for D-01: the input survives every way of naming it as
-// the output, with or without -force.
+// The input survives every way of naming it as the output, with or without
+// -force.
 func TestCLI_OutputIsInput(t *testing.T) {
 	t.Parallel()
 
@@ -631,7 +631,7 @@ func TestCLI_OutputIsInput(t *testing.T) {
 	}
 }
 
-// Regression test for D-11: an existing output is replaced only with -force.
+// An existing output is replaced only with -force.
 func TestCLI_ExistingOutput(t *testing.T) {
 	t.Parallel()
 
@@ -673,7 +673,7 @@ func TestCLI_ExistingOutput(t *testing.T) {
 	})
 }
 
-// Regression test for D-13: a new output file is readable by its owner only.
+// A new output file is readable by its owner only.
 func TestCLI_OutputPermissions(t *testing.T) {
 	t.Parallel()
 

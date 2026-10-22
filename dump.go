@@ -21,7 +21,7 @@ const maxInputSize = 1 << 20
 
 // supportedFileTypes are the Proxmark3 FileType values of MIFARE Classic dumps.
 // All three store the card data used here in the same fields; "mfc v3" adds
-// Card.ATS and Card.SIGNATURE (see docs/audit-and-compatibility.md).
+// Card.ATS and Card.SIGNATURE (see docs/conversion.md).
 var supportedFileTypes = map[string]bool{"mfcard": true, "mfc v2": true, "mfc v3": true}
 
 // cardTypes maps a complete dump's block count to the Flipper "Mifare Classic

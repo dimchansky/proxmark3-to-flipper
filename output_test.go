@@ -283,7 +283,7 @@ func TestWriteOutputFile_New(t *testing.T) {
 	}
 }
 
-// Regression test for D-11: an existing output is kept unless -force is given.
+// An existing output is kept unless -force is given.
 func TestWriteOutputFile_ExistingWithoutForce(t *testing.T) {
 	t.Parallel()
 
@@ -571,9 +571,8 @@ func (f *faults) ops() fileOps {
 	}
 }
 
-// Regression tests for D-07 and D-08: every failure while writing, syncing,
-// closing or publishing is reported, the incomplete file is removed, and an
-// existing destination is left untouched.
+// Every failure while writing, syncing, closing or publishing is reported, the
+// incomplete file is removed, and an existing destination is left untouched.
 func TestWriteOutputFile_InjectedFailures(t *testing.T) {
 	t.Parallel()
 

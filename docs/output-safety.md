@@ -2,7 +2,7 @@
 
 How `proxmark3-to-flipper` writes the `-o` file, what it guarantees and where
 the guarantees end. Implemented in [`output.go`](../output.go), tested in
-[`output_test.go`](../output_test.go) and [`main_cli_test.go`](../main_cli_test.go).
+[`output_test.go`](../output_test.go) and [`main_test.go`](../main_test.go).
 
 ## Usage
 
@@ -11,11 +11,9 @@ proxmark3-to-flipper -i dump.json -o card.nfc          # fails if card.nfc exist
 proxmark3-to-flipper -i dump.json -o card.nfc -force   # replaces card.nfc
 ```
 
-**Compatibility change:** before this change an existing output was silently
-overwritten. Now it is kept and the command fails with
-`refusing to overwrite existing file (use -force to replace it)`. Scripts that
-relied on overwriting must add `-force`. The exit code for this and every other
-output error is 1.
+An existing output is kept, and the command fails with
+`refusing to overwrite existing file (use -force to replace it)`. This and every
+other output error exits with status 1.
 
 ## Strategy
 
@@ -118,12 +116,11 @@ mode, owner, extended attributes and other hard links are not carried over.
 - **Replacement.** Go's `os.Rename` calls `MoveFileEx` with
   `MOVEFILE_REPLACE_EXISTING`. Microsoft does not document this as atomic, and
   `ReplaceFile` is not used. This tool never deletes the destination itself, so
-  a failed call leaves the old file in place. Observed in CI
-  (`TestWriteOutputFile_ForcePlatformBehavior`, Windows Server 2025 runner,
-  NTFS): replacing a read-only destination, or one another process holds open,
-  fails with "Access is denied" and the old file is kept. Linux and macOS
-  replace both. In every case the test asserts that no data is lost and no
-  temporary file remains.
+  a failed call leaves the old file in place. On NTFS, replacing a read-only
+  destination, or one that another process holds open, fails with "Access is
+  denied" and the old file is kept; Linux and macOS replace both.
+  `TestWriteOutputFile_ForcePlatformBehavior` runs on every platform in CI and
+  asserts that either outcome loses no data and leaves no temporary file.
 - **Permissions.** Go uses only the owner-write bit of the mode on Windows, to
   set or clear the read-only attribute. The file is created writable and gets
   the ACLs inherited from its directory, so `0600` does not restrict other
@@ -163,7 +160,7 @@ input's directory, between the check and the rename, is not detected.
 | Cleanup failure reported | `TestWriteOutputFile_CleanupFailure` |
 | Real rename failure keeps the destination | `TestWriteOutputFile_ReplaceFails` |
 | Missing and read-only directories | `TestWriteOutputFile_MissingDirectory`, `TestWriteOutputFile_ReadOnlyDirectory` |
-| Mode `0600` on POSIX, writable file on Windows | `TestWriteOutputFile_New`, `TestCLI_OutputPermissions` |
+| Mode `0600` on POSIX (never wider, whatever the umask), writable file on Windows | `TestWriteOutputFile_New`, `TestCLI_OutputPermissions`, `TestCLI_OutputPermissionsUnderUmask` |
 | No temporary files after success or handled failure | every test above checks the directory listing |
 
 Failures are injected through the `fileOps` seam in `output.go`. The injected

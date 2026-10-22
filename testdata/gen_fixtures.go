@@ -10,7 +10,7 @@
 //
 // The expected NFC files are rendered from the same card model as the JSON
 // inputs, by a writer that follows the Flipper NFC file format version 2 and
-// MIFARE Classic data format version 2 (see docs/audit-and-compatibility.md).
+// MIFARE Classic data format version 2 (see docs/conversion.md).
 // The writer below shares no code with the converter under test, so a golden
 // file is an independent statement of the expected output, not a snapshot of
 // the converter.

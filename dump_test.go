@@ -14,10 +14,7 @@ import (
 	"testing"
 )
 
-// The tests in this file assert the conversion contract described in
-// docs/audit-and-compatibility.md. Behavior that is known to be wrong and not
-// fixed yet is captured by the intended-behavior tests in main_defects_test.go,
-// which are built only with -tags knowndefects and currently fail.
+// The tests in this file assert the input rules described in docs/conversion.md.
 
 func TestParseProxMark3JSONFile(t *testing.T) {
 	t.Parallel()
@@ -270,11 +267,11 @@ func TestParseProxmark3JSON_Rejected(t *testing.T) {
 		{name: "root is null", input: `null`, wantMsg: "must be produced by Proxmark3"},
 		{name: "blocks is an array", input: `{"Created":"proxmark3","FileType":"mfcard","blocks":["00"]}`, wantMsg: "failed to decode Proxmark3 JSON file", wantErr: isTypeErr},
 		{name: "block is a number", input: strings.Replace(valid, `"5": "`+strings.Repeat("00", 16)+`"`, `"5": 0`, 1), wantMsg: "failed to decode Proxmark3 JSON file", wantErr: isTypeErr},
-		// D-09: exactly one document.
+		// Exactly one document.
 		{name: "trailing garbage", input: valid + "garbage", wantMsg: "failed to decode Proxmark3 JSON file", wantErr: isSyntaxErr},
 		{name: "trailing closing brace", input: valid + "}", wantMsg: "failed to decode Proxmark3 JSON file", wantErr: isSyntaxErr},
 		{name: "second document", input: valid + valid, wantMsg: "failed to decode Proxmark3 JSON file", wantErr: isSyntaxErr},
-		// D-12: duplicate keys.
+		// Duplicate keys.
 		{name: "duplicate block key", input: strings.Replace(valid, `"63": "`, `"5": "`+strings.Repeat("FF", 16)+`", "63": "`, 1), wantMsg: `duplicate key "5" in blocks`},
 		{name: "duplicate blocks object", input: strings.Replace(valid, `"Card": {`, `"blocks": {}, "Card": {`, 1), wantMsg: `duplicate key "blocks" in the top-level value`},
 		{name: "duplicate UID", input: strings.Replace(valid, `"UID": "11223344",`, `"UID": "11223344", "UID": "55667788",`, 1), wantMsg: `duplicate key "UID" in Card`},
@@ -288,7 +285,7 @@ func TestParseProxmark3JSON_Rejected(t *testing.T) {
 		{name: "FileType of another card family", input: strings.Replace(valid, `"mfcard"`, `"mfu"`, 1), wantMsg: `unsupported FileType "mfu"`},
 		{name: "FileType raw", input: strings.Replace(valid, `"mfcard"`, `"raw"`, 1), wantMsg: `unsupported FileType "raw"`},
 		{name: "FileType mfc v4", input: strings.Replace(valid, `"mfcard"`, `"mfc v4"`, 1), wantMsg: `unsupported FileType "mfc v4"`},
-		// D-03: required card data.
+		// Required card data.
 		{name: "no Card and no blocks", input: `{"Created":"proxmark3","FileType":"mfcard"}`, wantMsg: "missing Card"},
 		{name: "Card is null", input: `{"Created":"proxmark3","FileType":"mfcard","Card":null,"blocks":{}}`, wantMsg: "missing Card"},
 		{name: "UID missing", input: strings.Replace(valid, `"UID": "11223344",`, "", 1), wantMsg: "missing Card.UID"},
@@ -299,7 +296,7 @@ func TestParseProxmark3JSON_Rejected(t *testing.T) {
 		{name: "blocks missing", input: `{"Created":"proxmark3","FileType":"mfcard","Card":{"UID":"11223344","ATQA":"0400","SAK":"08"}}`, wantMsg: "missing blocks"},
 		{name: "blocks is null", input: `{"Created":"proxmark3","FileType":"mfcard","Card":{"UID":"11223344","ATQA":"0400","SAK":"08"},"blocks":null}`, wantMsg: "missing blocks"},
 		{name: "blocks is empty", input: pm3JSON("mfcard", "11223344", "0400", "08", nil, false), wantMsg: "dump has no blocks"},
-		// D-06: card identity lengths.
+		// Card identity lengths.
 		{name: "empty UID", input: withCard("", "0400", "08"), wantMsg: "invalid Card.UID: 0 bytes, want 4, 7 or 10"},
 		{name: "3-byte UID", input: withCard("112233", "0400", "08"), wantMsg: "invalid Card.UID: 3 bytes"},
 		{name: "5-byte UID", input: withCard("1122334455", "0400", "08"), wantMsg: "invalid Card.UID: 5 bytes"},
@@ -318,13 +315,13 @@ func TestParseProxmark3JSON_Rejected(t *testing.T) {
 		{name: "SAK is not hex", input: withCard("11223344", "0400", "0x"), wantMsg: "invalid Card.SAK: invalid hexadecimal character at offset 1", wantErr: isInvalidByte},
 		{name: "block is not hex", input: withBlock(5, strings.Repeat("ZZ", 16)), wantMsg: "invalid block 5: invalid hexadecimal character at offset 0", wantErr: isInvalidByte},
 		{name: "block has odd length", input: withBlock(63, strings.Repeat("0", 31)), wantMsg: "invalid block 63: odd number of hexadecimal digits (31)", wantErr: isErrLength},
-		// D-05: block lengths.
+		// Block lengths.
 		{name: "empty block", input: withBlock(9, ""), wantMsg: "invalid block 9: 0 bytes, want 16"},
 		{name: "1-byte block", input: withBlock(9, "00"), wantMsg: "invalid block 9: 1 bytes, want 16"},
 		{name: "15-byte block", input: withBlock(9, strings.Repeat("00", 15)), wantMsg: "invalid block 9: 15 bytes, want 16"},
 		{name: "17-byte block", input: withBlock(9, strings.Repeat("00", 17)), wantMsg: "invalid block 9: 17 bytes, want 16"},
 		{name: "32-byte block", input: withBlock(0, strings.Repeat("00", 32)), wantMsg: "invalid block 0: 32 bytes, want 16"},
-		// D-18: block indices.
+		// Block indices.
 		{name: "block index missing", input: strings.Replace(valid, `"10": "`, `"64": "`, 1), wantMsg: "missing block 10"},
 		{name: "last block index missing", input: strings.Replace(valid, `"63": "`, `"64": "`, 1), wantMsg: "missing block 63"},
 		{name: "non-numeric block index", input: strings.Replace(valid, `"63": "`, `"foo": "00", "63": "`, 1), wantMsg: `invalid block index "foo"`},
@@ -334,7 +331,7 @@ func TestParseProxmark3JSON_Rejected(t *testing.T) {
 		{name: "block index with space", input: strings.Replace(valid, `"7": "`, `" 7": "`, 1), wantMsg: `invalid block index " 7"`},
 		{name: "fractional block index", input: strings.Replace(valid, `"7": "`, `"7.0": "`, 1), wantMsg: `invalid block index "7.0"`},
 	}
-	// D-04: only complete Mini, 1K and 4K dumps.
+	// Only complete Mini, 1K and 4K dumps.
 	for _, n := range []int{1, 19, 21, 63, 65, 127, 129, 255, 257} {
 		tests = append(tests, struct {
 			name    string
@@ -375,8 +372,8 @@ func TestParseProxmark3JSON_Rejected(t *testing.T) {
 	}
 }
 
-// Regression test for D-15: diagnostics describe a bad value by field,
-// position and length but never repeat it, because it may be a sector key.
+// Diagnostics describe a bad value by field, position and length but never
+// repeat it, because it may be a sector key.
 func TestParseProxmark3JSON_ErrorsDoNotLeakData(t *testing.T) {
 	t.Parallel()
 
@@ -413,7 +410,7 @@ func TestParseProxmark3JSON_ErrorsDoNotLeakData(t *testing.T) {
 	}
 }
 
-// Regression test for D-14: input is read through a bounded reader.
+// Input is read through a bounded reader.
 func TestParseProxmark3JSON_SizeLimit(t *testing.T) {
 	t.Parallel()
 

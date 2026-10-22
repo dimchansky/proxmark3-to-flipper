@@ -72,7 +72,7 @@ func TestHexData_String(t *testing.T) {
 }
 
 // An independent check against the MIFARE Classic 4K example in the Flipper
-// NFC format documentation (pinned in docs/audit-and-compatibility.md):
+// NFC format documentation (pinned in docs/conversion.md):
 // https://github.com/flipperdevices/flipperzero-firmware/blob/66613d2b46e4aa533aeaf8181d2a1e6566616a4e/documentation/file_formats/NfcFileFormats.md
 // The example is a version 4 file, so its ATQA is MSB first ("00 02"); block 0
 // carries the same ATQA LSB first ("02 00"), which is where Proxmark3 takes
