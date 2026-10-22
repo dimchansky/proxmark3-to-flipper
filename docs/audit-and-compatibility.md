@@ -342,7 +342,7 @@ unless marked "inspection".
 ### D-09 Trailing data after the JSON document accepted: Low
 
 - **Reproduce:** a valid dump followed by `garbage`, `}` or a second document.
-- **Root cause:** a single `Decoder.Decode` call. **Fix:** after decoding, require `io.EOF` from a second `Decode` (or check `dec.More()`).
+- **Root cause:** a single `Decoder.Decode` call. **Fix:** after decoding the document, call `Decode` a second time and require it to return `io.EOF`. `Decoder.More` is not a substitute: it reports whether another element follows inside the current array or object, not whether the input ends after the document.
 - **Test:** `TestDefectD09_TrailingDataAccepted`.
 
 ### D-10 Wrong diagnostic for missing `-o`; inconsistent exit codes: Low
