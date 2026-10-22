@@ -24,3 +24,6 @@
 
 # Local working directory for real card dumps; never commit RFID dumps
 /tmp/
+
+# GoReleaser output
+/dist/

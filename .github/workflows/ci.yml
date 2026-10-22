@@ -89,13 +89,21 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
+  # Builds and checks the release archives on every platform, publishing
+  # nothing; see build-release.yml.
+  release:
+    name: Release artifacts
+    uses: ./.github/workflows/build-release.yml
+    permissions:
+      contents: read
+
   # The single status check required by branch protection. It succeeds only if
   # every job it needs succeeded; a failed, cancelled or skipped job fails it.
   # always() makes it run (and fail) even when a needed job did not succeed.
   required:
     name: CI Required
     if: always()
-    needs: [test, lint]
+    needs: [test, lint, release]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

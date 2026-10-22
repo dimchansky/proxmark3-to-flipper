@@ -42,9 +42,79 @@ file. Use `--mini`, `--1k` or `--4k` for card sizes the client cannot detect.
 
 ## Installation
 
-Release binaries for Windows, macOS and Linux will be published on the
-[Releases page](https://github.com/dimchansky/proxmark3-to-flipper/releases);
-there is no release yet. Until then, install with Go 1.26 or later:
+### Prebuilt archives
+
+Each release on the
+[Releases page](https://github.com/dimchansky/proxmark3-to-flipper/releases)
+has an archive for every supported system, and a checksum file. If the page
+does not list a release yet, [install with Go](#with-go) instead.
+
+| System | Archive |
+| --- | --- |
+| Windows, x64 | `proxmark3-to-flipper_VERSION_windows_amd64.zip` |
+| Windows on Arm | `proxmark3-to-flipper_VERSION_windows_arm64.zip` |
+| macOS, Apple silicon | `proxmark3-to-flipper_VERSION_macos_arm64.tar.gz` |
+| macOS, Intel | `proxmark3-to-flipper_VERSION_macos_amd64.tar.gz` |
+| Linux, x86-64 | `proxmark3-to-flipper_VERSION_linux_amd64.tar.gz` |
+| Linux, 64-bit Arm (e.g. Raspberry Pi OS 64-bit) | `proxmark3-to-flipper_VERSION_linux_arm64.tar.gz` |
+| Linux, 32-bit Arm (ARMv7) | `proxmark3-to-flipper_VERSION_linux_armv7.tar.gz` |
+
+The binaries need Windows 10 or later and macOS 13 or later. Each archive
+contains the executable, this README and the license.
+
+Download the archive and `proxmark3-to-flipper_VERSION_checksums.txt` into one
+folder, check the archive, and unpack it only if the check passes. Replace `VERSION` (for example
+`1.0.0`) and the system name as needed.
+
+**Linux:**
+
+```sh
+sha256sum --check --ignore-missing proxmark3-to-flipper_VERSION_checksums.txt &&
+  tar -xzf proxmark3-to-flipper_VERSION_linux_amd64.tar.gz &&
+  ./proxmark3-to-flipper -version
+```
+
+**macOS:**
+
+```sh
+shasum -a 256 --check --ignore-missing proxmark3-to-flipper_VERSION_checksums.txt &&
+  tar -xzf proxmark3-to-flipper_VERSION_macos_arm64.tar.gz &&
+  ./proxmark3-to-flipper -version
+```
+
+The binaries are not signed by Apple. If macOS refuses to open a file
+downloaded with a browser, remove the quarantine flag after checking the
+checksum: `xattr -d com.apple.quarantine proxmark3-to-flipper`.
+
+**Windows (PowerShell):**
+
+```powershell
+$archive = "proxmark3-to-flipper_VERSION_windows_amd64.zip"
+$entry = Select-String -SimpleMatch "  $archive" proxmark3-to-flipper_VERSION_checksums.txt
+if ($entry -and (Get-FileHash $archive -Algorithm SHA256).Hash -eq $entry.Line.Split(" ")[0]) {
+    Expand-Archive $archive -DestinationPath proxmark3-to-flipper
+    .\proxmark3-to-flipper\proxmark3-to-flipper.exe -version
+} else {
+    Write-Error "Checksum missing or wrong: do not use $archive"
+}
+```
+
+The archive is unpacked only if its checksum is listed and matches.
+
+Move the executable to a folder on your `PATH` to run it from anywhere.
+
+Releases are published as GitHub
+[immutable releases](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/immutable-releases),
+so with the [GitHub CLI](https://cli.github.com/) you can also check that a
+downloaded file is exactly what was published:
+
+```sh
+gh release verify-asset vVERSION proxmark3-to-flipper_VERSION_linux_amd64.tar.gz --repo dimchansky/proxmark3-to-flipper
+```
+
+### With Go
+
+With Go 1.26 or later:
 
 ```sh
 go install github.com/dimchansky/proxmark3-to-flipper@latest
@@ -145,6 +215,17 @@ golangci-lint run      # configuration in .golangci.yml
 `go run testdata/gen_fixtures.go` regenerates them. Pull requests run the same
 checks on Linux, macOS and Windows. Never add real card dumps to the
 repository.
+
+Release archives are built by [GoReleaser](https://goreleaser.com/) from
+`.goreleaser.yaml`. To build and check them locally without publishing:
+
+```sh
+goreleaser release --snapshot --clean
+go run ./tools/verifydist -commit "$(git rev-parse HEAD)" -snapshot -smoke host
+```
+
+Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`, which creates a
+draft release; it is published by hand after review.
 
 ## License
 
