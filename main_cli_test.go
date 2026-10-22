@@ -118,7 +118,7 @@ func assertNoFile(t *testing.T, name string) {
 // assertUsage checks that the flag summary was printed after a usage error.
 func assertUsage(t *testing.T, stderr string) {
 	t.Helper()
-	for _, want := range []string{"Usage of ", "-i string", "-o string", "Version: "} {
+	for _, want := range []string{"Usage of ", "-i string", "-o string", "-force", "Version: "} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr does not contain %q:\n%s", want, stderr)
 		}
@@ -307,6 +307,131 @@ func TestCLI_OutputDirectoryMissing(t *testing.T) {
 		t.Errorf("stderr = %q, want a create error", res.stderr)
 	}
 	assertNoFile(t, out)
+}
+
+// Regression test for D-01: the input survives every way of naming it as
+// the output, with or without -force.
+func TestCLI_OutputIsInput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// setup returns the -i and -o arguments, relative to dir.
+		setup func(t *testing.T, dir string) (in, out string)
+	}{
+		{name: "identical path", setup: func(t *testing.T, dir string) (string, string) {
+			return "d.json", "d.json"
+		}},
+		{name: "relative alias", setup: func(t *testing.T, dir string) (string, string) {
+			return "d.json", "." + string(filepath.Separator) + "d.json"
+		}},
+		{name: "absolute and relative path", setup: func(t *testing.T, dir string) (string, string) {
+			return filepath.Join(dir, "d.json"), "d.json"
+		}},
+		{name: "output is a symlink to the input", setup: func(t *testing.T, dir string) (string, string) {
+			symlinkOrSkip(t, "d.json", filepath.Join(dir, "link.nfc"))
+			return "d.json", "link.nfc"
+		}},
+		{name: "input is a symlink to the output", setup: func(t *testing.T, dir string) (string, string) {
+			symlinkOrSkip(t, "d.json", filepath.Join(dir, "link.json"))
+			return "link.json", "d.json"
+		}},
+		{name: "output is a hard link to the input", setup: func(t *testing.T, dir string) (string, string) {
+			linkOrSkip(t, filepath.Join(dir, "d.json"), filepath.Join(dir, "hard.nfc"))
+			return "d.json", "hard.nfc"
+		}},
+	}
+	for _, tt := range tests {
+		for _, force := range []bool{false, true} {
+			tt, force := tt, force
+			t.Run(tt.name+"/"+forceName(force), func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "d.json"), readFile(t, fixture1K), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				in, out := tt.setup(t, dir)
+				before, err := os.ReadDir(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				args := []string{"-i", in, "-o", out}
+				if force {
+					args = append(args, "-force")
+				}
+
+				res := runCLI(t, dir, args...)
+				if res.code != 1 {
+					t.Errorf("exit code = %d, want 1", res.code)
+				}
+				if !strings.Contains(res.stderr, "is the same file as the input") {
+					t.Errorf("stderr = %q, want a same-file error", res.stderr)
+				}
+				assertContent(t, filepath.Join(dir, "d.json"), readFile(t, fixture1K))
+				names := make([]string, len(before))
+				for i, e := range before {
+					names[i] = e.Name()
+				}
+				assertDirEntries(t, dir, names...)
+			})
+		}
+	}
+}
+
+// Regression test for D-11: an existing output is replaced only with -force.
+func TestCLI_ExistingOutput(t *testing.T) {
+	t.Parallel()
+
+	t.Run("refused without -force", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		in := copyFixture(t, dir, fixture1K)
+		out := filepath.Join(dir, "card.nfc")
+		writeTestFile(t, out, oldData)
+
+		res := runCLI(t, dir, "-i", in, "-o", out)
+		if res.code != 1 {
+			t.Errorf("exit code = %d, want 1", res.code)
+		}
+		if !strings.HasPrefix(res.stderr, "error: refusing to overwrite existing file (use -force to replace it): ") {
+			t.Errorf("stderr = %q, want a refusal that mentions -force", res.stderr)
+		}
+		if strings.Contains(res.stderr, "Usage of ") {
+			t.Errorf("usage printed for a non-usage error:\n%s", res.stderr)
+		}
+		assertContent(t, out, oldData)
+		assertDirEntries(t, dir, filepath.Base(in), "card.nfc")
+	})
+
+	t.Run("replaced with -force", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		in := copyFixture(t, dir, fixture4K)
+		out := filepath.Join(dir, "card.nfc")
+		writeTestFile(t, out, oldData)
+
+		res := runCLI(t, dir, "-force", "-i", in, "-o", out)
+		if res.code != 0 || res.stdout != "" || res.stderr != "" {
+			t.Fatalf("exit code %d, stdout %q, stderr %q; want silent success", res.code, res.stdout, res.stderr)
+		}
+		assertSameText(t, golden4K, readFile(t, out), readFile(t, golden4K))
+		assertOwnerOnly(t, out)
+		assertDirEntries(t, dir, filepath.Base(in), "card.nfc")
+	})
+}
+
+// Regression test for D-13: a new output file is readable by its owner only.
+func TestCLI_OutputPermissions(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	in := copyFixture(t, dir, fixture1K)
+	out := filepath.Join(dir, "card.nfc")
+	if res := runCLI(t, dir, "-i", in, "-o", out); res.code != 0 {
+		t.Fatalf("exit code = %d; stderr:\n%s", res.code, res.stderr)
+	}
+	assertOwnerOnly(t, out)
+	assertDirEntries(t, dir, filepath.Base(in), "card.nfc")
 }
 
 func strPtr(s string) *string { return &s }
