@@ -281,7 +281,13 @@ diagnostics, hardening, maintainability.
 `knowndefects`), which fails at the baseline. Every defect below was reproduced
 unless marked "inspection".
 
-### D-01 Same input and output path destroys the dump: High
+**Status after Task 02:** D-01, D-07, D-08, D-11 and D-13 are fixed; see
+[output-safety.md](output-safety.md). Their regression tests moved into the
+default suite (`TestCLI_OutputIsInput`, `TestWriteOutputFile_*`,
+`TestCLI_ExistingOutput`, `TestCLI_OutputPermissions`). All other defects are
+still open and their `TestDefect…` tests still fail.
+
+### D-01 Same input and output path destroys the dump: High (fixed in Task 02)
 
 - **Reproduce:** `proxmark3-to-flipper -i d.json -o d.json` (also `./d.json` or a symlink to `d.json`).
 - **Expected:** refuse; input untouched. **Actual:** exit 0; `d.json` now contains NFC text.
@@ -325,14 +331,14 @@ unless marked "inspection".
 - **Actual:** written as is; Flipper rejects such files.
 - **Fix:** UID 4/7/10 (warn that 10-byte UIDs need recent firmware, see C-4), ATQA 2, SAK 1. **Test:** `TestDefectD06_CardIdentityNotValidated`.
 
-### D-07 Intermediate write errors are ignored: Medium
+### D-07 Intermediate write errors are ignored: Medium (fixed in Task 02)
 
 - **Reproduce:** `TestDefectD07_IntermediateWriteErrorIgnored` (a writer failing once).
 - **Actual:** `writeNFC` returns nil; only the error of the last `Fprintf` is kept. Confirmed by `ineffassign`/SA4006.
 - **Impact:** a transient failure (for example on a network or removable volume) yields a truncated file and exit 0. A persistent error such as a full disk is still reported, because the last write also fails (`TestWriteNFC_PersistentWriterError`).
 - **Fix:** check every write, or write through `bufio.Writer` and check `Flush`.
 
-### D-08 Close errors ignored, partial output left behind: Medium (inspection)
+### D-08 Close errors ignored, partial output left behind: Medium (inspection; fixed in Task 02)
 
 - `defer nfcFile.Close()` discards the error; some file systems report write failures only on close.
 - On a write error the partially written file remains, already replacing any previous file.
@@ -351,7 +357,7 @@ unless marked "inspection".
 - **Fix:** message "please provide output Flipper NFC file"; exit 2 for all usage errors.
 - **Test:** `TestDefectD10_UsageDiagnostics`. **Compatibility:** exit code changes for scripts.
 
-### D-11 Existing output overwritten without notice: Low (design decision)
+### D-11 Existing output overwritten without notice: Low (fixed in Task 02: refused unless `-force`)
 
 - **Reproduce:** `-o existing.nfc` replaces the file, exit 0.
 - A Flipper-captured `.nfc` file can be irreplaceable. Options: refuse unless `-force`, or keep overwriting (like `cp`) but do it atomically. See Q2. No test until decided.
@@ -360,7 +366,7 @@ unless marked "inspection".
 
 - `encoding/json` keeps the last value for a repeated key. **Test:** `TestDefectD12_DuplicateBlockKeys`. Fixing it requires token-level decoding of `blocks`.
 
-### D-13 Output file is world-readable: Low
+### D-13 Output file is world-readable: Low (fixed in Task 02)
 
 - Created with mode 0666 & umask (0644 typically) although it contains sector keys.
 - **Fix:** create with 0600. **Test:** `TestDefectD13_OutputFilePermissions` (POSIX only).
