@@ -86,10 +86,10 @@ func (h hexData) String() string {
 
 	n := len(h)
 	for i := 0; i < n-1; i++ {
-		sb.WriteString(fmt.Sprintf("%02X ", h[i]))
+		fmt.Fprintf(&sb, "%02X ", h[i])
 	}
 	if n >= 1 {
-		sb.WriteString(fmt.Sprintf("%02X", h[n-1]))
+		fmt.Fprintf(&sb, "%02X", h[n-1])
 	}
 
 	return sb.String()
