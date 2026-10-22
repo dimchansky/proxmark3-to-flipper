@@ -281,11 +281,20 @@ diagnostics, hardening, maintainability.
 `knowndefects`), which fails at the baseline. Every defect below was reproduced
 unless marked "inspection".
 
-**Status after Task 02:** D-01, D-07, D-08, D-11 and D-13 are fixed; see
-[output-safety.md](output-safety.md). Their regression tests moved into the
-default suite (`TestCLI_OutputIsInput`, `TestWriteOutputFile_*`,
-`TestCLI_ExistingOutput`, `TestCLI_OutputPermissions`). All other defects are
-still open and their `TestDefect…` tests still fail.
+**Status** (updated in Task 03):
+
+| Status | Defects | Where |
+| --- | --- | --- |
+| Fixed in Task 02 | D-01, D-07, D-08, D-11, D-13 | [output-safety.md](output-safety.md) |
+| Fixed in Task 03 | D-02, D-03, D-04, D-05, D-06, D-09, D-12, D-14, D-15, D-18 | [conversion.md](conversion.md) |
+| Open | D-10, D-16, D-17, D-19 | `TestDefect…` in `main_defects_test.go` for D-10 and D-19 |
+
+Intentionally unsupported, by design rather than as defects: MIFARE Classic 2K
+dumps (rejected, Flipper has no 2K type), partial dumps (rejected, not
+padded), `mfc v3` `Card.ATS` and `Card.SIGNATURE` (dropped with a warning) and
+unread data that Proxmark3 stored as zeros (C-1, converted as is). Regression
+tests for the fixed defects are in the default suite; `main_defects_test.go`
+lists where each one went.
 
 ### D-01 Same input and output path destroys the dump: High (fixed in Task 02)
 
@@ -295,7 +304,7 @@ still open and their `TestDefect…` tests still fail.
 - **Fix:** compare `os.Stat` of input and an existing output with `os.SameFile` before writing; write via a temp file and rename (D-08).
 - **Test:** `TestDefectD01_SamePathDestroysInput`; add a symlink and hard-link case. **Compatibility:** none.
 
-### D-02 Dumps from Proxmark3 v4.17511 and later are rejected: High
+### D-02 Dumps from Proxmark3 v4.17511 and later are rejected: High (fixed in Task 03)
 
 - **Reproduce:** convert `testdata/proxmark3/mfc-v2-1k-uid4.json`.
 - **Expected:** same output as for `mfcard`. **Actual:** `error: expecting Mifare card dump`, exit 1; the message is misleading for a MIFARE dump.
@@ -303,14 +312,14 @@ still open and their `TestDefect…` tests still fail.
 - **Fix:** accept `mfcard`, `mfc v2`, `mfc v3`; name the accepted types in the error. Do this **after** D-03 to D-06, so newly accepted files are validated.
 - **Test:** `TestDefectD02_CurrentProxmark3FileTypes`. **Compatibility:** additive.
 
-### D-03 Empty dump converted with exit 0: Medium
+### D-03 Empty dump converted with exit 0: Medium (fixed in Task 03)
 
 - **Reproduce:** `{"Created":"proxmark3","FileType":"mfcard"}`.
 - **Actual:** exit 0, file with `UID: `, `ATQA: `, `SAK: `, `Mifare Classic type: 0K` and no blocks.
 - **Root cause:** no presence checks; missing fields decode to empty values.
 - **Fix:** require `Card` fields and a non-empty `blocks`. **Test:** `TestDefectD03_EmptyDumpAccepted`.
 
-### D-04 Unsupported block counts produce unloadable files: Medium
+### D-04 Unsupported block counts produce unloadable files: Medium (fixed in Task 03: MINI written, 2K and other sizes rejected)
 
 - **Reproduce:** convert `testdata/proxmark3/mfcard-mini-uid4.json` (20 blocks) or `mfcard-2k-uid4.json` (128).
 - **Actual:** `Mifare Classic type: 0K` / `2K`, exit 0. Flipper accepts only `MINI`, `1K`, `4K`.
@@ -318,14 +327,14 @@ still open and their `TestDefect…` tests still fail.
 - **Test:** `TestDefectD04_UnsupportedBlockCounts` (expected Mini output: `testdata/flipper/mfc-mini-uid4.expected.nfc`).
 - **Compatibility:** files that were silently invalid now fail.
 
-### D-05 Block length not validated: Medium
+### D-05 Block length not validated: Medium (fixed in Task 03)
 
 - **Reproduce:** a block of 0, 1, 15, 17 or 32 bytes.
 - **Actual:** written as is (`Block 9: ` for an empty block). See H-1 for the device-side effect.
 - **Root cause:** `// TODO: check block length`.
 - **Fix:** require 16 bytes; decide whether to zero-pad short blocks like the Proxmark3 loader does (Q8). Proxmark3 itself rejects blocks longer than 16 bytes. **Test:** `TestDefectD05_BlockSizeNotValidated`.
 
-### D-06 UID, ATQA and SAK lengths not validated: Medium
+### D-06 UID, ATQA and SAK lengths not validated: Medium (fixed in Task 03)
 
 - **Reproduce:** UID `112233`, ATQA `04`, SAK `0800`, or empty values.
 - **Actual:** written as is; Flipper rejects such files.
@@ -345,7 +354,7 @@ still open and their `TestDefect…` tests still fail.
 - **Fix:** write to a temp file in the target directory, `Sync`, `Close` (checked), then `os.Rename`; remove the temp file on failure.
 - **Test:** requires an injectable file system or a writer seam; not reproducible portably at the baseline.
 
-### D-09 Trailing data after the JSON document accepted: Low
+### D-09 Trailing data after the JSON document accepted: Low (fixed in Task 03)
 
 - **Reproduce:** a valid dump followed by `garbage`, `}` or a second document.
 - **Root cause:** a single `Decoder.Decode` call. **Fix:** after decoding the document, call `Decode` a second time and require it to return `io.EOF`. `Decoder.More` is not a substitute: it reports whether another element follows inside the current array or object, not whether the input ends after the document.
@@ -362,7 +371,7 @@ still open and their `TestDefect…` tests still fail.
 - **Reproduce:** `-o existing.nfc` replaces the file, exit 0.
 - A Flipper-captured `.nfc` file can be irreplaceable. Options: refuse unless `-force`, or keep overwriting (like `cp`) but do it atomically. See Q2. No test until decided.
 
-### D-12 Duplicate block keys accepted: Low
+### D-12 Duplicate block keys accepted: Low (fixed in Task 03)
 
 - `encoding/json` keeps the last value for a repeated key. **Test:** `TestDefectD12_DuplicateBlockKeys`. Fixing it requires token-level decoding of `blocks`.
 
@@ -371,12 +380,12 @@ still open and their `TestDefect…` tests still fail.
 - Created with mode 0666 & umask (0644 typically) although it contains sector keys.
 - **Fix:** create with 0600. **Test:** `TestDefectD13_OutputFilePermissions` (POSIX only).
 
-### D-14 No input size limit: Low
+### D-14 No input size limit: Low (fixed in Task 03: 1 MiB limit)
 
 - **Measured:** a 93 MB file with 2,000,000 blocks used 470 MB RSS and produced a 125 MB `0K` file with exit 0.
 - **Fix:** read through `io.LimitReader` (a 4K dump with `SectorKeys` is about 28 KB; 1 MiB is ample) and reject more than 256 blocks.
 
-### D-15 Diagnostics echo raw card data: Low
+### D-15 Diagnostics echo raw card data: Low (fixed in Task 03)
 
 - `cannot parse block 3 data: failed to parse hex data 'AAAAAAAAAA00FF078069BBBBBBBBBB0Z'` prints a sector trailer, including keys, to stderr (terminal history, CI logs).
 - **Fix:** report the block index, character offset and length instead of the value.
@@ -390,7 +399,7 @@ still open and their `TestDefect…` tests still fail.
 
 - `Version`, `BuildTime` and `GitHash` are meant to be set with `-ldflags`, but no build script does it; there is no `-version` flag. Use `debug.ReadBuildInfo` as a fallback and add `-version`.
 
-### D-18 Misleading diagnostic for non-numeric block keys: Low
+### D-18 Misleading diagnostic for non-numeric block keys: Low (fixed in Task 03)
 
 - Keys `0`…`63` plus `foo` report "cannot find Mifare card data for block 64".
 - **Test:** `TestDefectD18_NonNumericBlockKeyDiagnostic`.
