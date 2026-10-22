@@ -340,6 +340,67 @@ func TestCLI_InvalidInputWithForce(t *testing.T) {
 	}
 }
 
+// The mfc v3 warning describes a finished conversion, so it must not appear
+// when the output could not be published; the output rules still hold then.
+func TestCLI_DroppedFieldsWarning(t *testing.T) {
+	t.Parallel()
+
+	t.Run("printed after a successful conversion", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		in := copyFixture(t, dir, fixtureV3)
+		out := filepath.Join(dir, "card.nfc")
+		res := runCLI(t, dir, "-i", in, "-o", out)
+		if res.code != 0 || res.stderr != warningV3 {
+			t.Fatalf("exit code %d, stderr %q; want 0 and %q", res.code, res.stderr, warningV3)
+		}
+		assertSameText(t, golden1K, readFile(t, out), readFile(t, golden1K))
+	})
+
+	failures := []struct {
+		name  string
+		setup func(t *testing.T, dir string) (args []string, keep string)
+	}{
+		{name: "existing output without -force", setup: func(t *testing.T, dir string) ([]string, string) {
+			out := filepath.Join(dir, "card.nfc")
+			writeTestFile(t, out, oldData)
+			return []string{"-o", out}, out
+		}},
+		{name: "output is the input", setup: func(t *testing.T, dir string) ([]string, string) {
+			in := filepath.Join(dir, filepath.Base(fixtureV3))
+			return []string{"-o", in, "-force"}, ""
+		}},
+		{name: "missing output directory", setup: func(t *testing.T, dir string) ([]string, string) {
+			return []string{"-o", filepath.Join(dir, "missing", "card.nfc"), "-force"}, ""
+		}},
+	}
+	for _, tt := range failures {
+		tt := tt
+		t.Run("not printed when "+tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			in := copyFixture(t, dir, fixtureV3)
+			args, keep := tt.setup(t, dir)
+			res := runCLI(t, dir, append([]string{"-i", in}, args...)...)
+			if res.code != 1 {
+				t.Errorf("exit code = %d, want 1", res.code)
+			}
+			if strings.Contains(res.stderr, "warning:") || !strings.HasPrefix(res.stderr, "error: ") {
+				t.Errorf("stderr = %q, want only the error", res.stderr)
+			}
+			assertContent(t, in, readFile(t, fixtureV3))
+			if keep != "" {
+				assertContent(t, keep, oldData)
+			}
+			names := []string{filepath.Base(fixtureV3)}
+			if keep != "" {
+				names = append(names, filepath.Base(keep))
+			}
+			assertDirEntries(t, dir, names...)
+		})
+	}
+}
+
 func TestCLI_OutputDirectoryMissing(t *testing.T) {
 	t.Parallel()
 

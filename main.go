@@ -52,17 +52,21 @@ func run() error {
 		return err
 	}
 
-	if len(card.Dropped) > 0 {
-		_, _ = fmt.Fprintf(os.Stderr, "warning: %s cannot be stored in a Flipper MIFARE Classic file and %s not converted\n",
-			strings.Join(card.Dropped, " and "), pluralWas(len(card.Dropped)))
-	}
-
 	// Render before touching the output, so that only I/O can fail there.
 	data := renderNFC(card)
 	if err := checkOutputIsNotInput(input, cfg.OutputNFCFile); err != nil {
 		return err
 	}
-	return writeOutputFile(osFileOps, cfg.OutputNFCFile, data, cfg.Force)
+	if err := writeOutputFile(osFileOps, cfg.OutputNFCFile, data, cfg.Force); err != nil {
+		return err
+	}
+
+	// Report dropped fields only for a conversion that actually happened.
+	if len(card.Dropped) > 0 {
+		_, _ = fmt.Fprintf(os.Stderr, "warning: %s cannot be stored in a Flipper MIFARE Classic file and %s not converted\n",
+			strings.Join(card.Dropped, " and "), pluralWas(len(card.Dropped)))
+	}
+	return nil
 }
 
 func pluralWas(n int) string {
