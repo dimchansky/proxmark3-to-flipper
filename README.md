@@ -34,8 +34,7 @@ This tries to recover all sector keys of the card; that does not succeed for
 every card. When all keys are found, it saves the card as
 `hf-mf-<UID>-dump.json` (plus a `.bin` copy and a key file). If you already
 have the keys, `hf mf dump --keys hf-mf-<UID>-key.bin` produces the same JSON
-file. Use
-`--mini`, `--1k` or `--4k` for card sizes the client cannot detect.
+file. Use `--mini`, `--1k` or `--4k` for card sizes the client cannot detect.
 
 > **Dumps are secrets.** A dump contains the card's sector keys and data,
 > which may grant physical access. Do not attach dumps, or `.nfc` files made
