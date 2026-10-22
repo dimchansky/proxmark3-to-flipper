@@ -46,7 +46,7 @@ type mifareCard struct {
 func parseProxMark3JSONFile(fileName string) (*mifareCard, fs.FileInfo, error) {
 	jsonFile, err := os.Open(fileName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse Proxmark3 dump file '%s': %w", fileName, err)
+		return nil, nil, fmt.Errorf("cannot open Proxmark3 dump: %w", err)
 	}
 	defer func() {
 		// The file is only read; a close error cannot affect the parsed data.
@@ -55,7 +55,7 @@ func parseProxMark3JSONFile(fileName string) (*mifareCard, fs.FileInfo, error) {
 
 	info, err := jsonFile.Stat()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse Proxmark3 dump file '%s': %w", fileName, err)
+		return nil, nil, fmt.Errorf("cannot read Proxmark3 dump: %w", err)
 	}
 	card, err := parseProxmark3JSON(jsonFile)
 	if err != nil {
