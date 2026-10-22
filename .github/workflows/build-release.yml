@@ -1,0 +1,162 @@
+# Builds the release archives with GoReleaser and verifies them, without
+# publishing anything. Called by ci.yml for every pull request and push to main
+# (with a local, never pushed simulation tag) and by release.yml for a real
+# version tag. The verified files are uploaded as the "release-dist" workflow
+# artifact.
+name: Build release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Version tag to build, e.g. v1.0.0. Empty builds a simulated release of the checked-out commit.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.27.3"
+  GORELEASER_VERSION: "v2.18.3"
+  # Used when inputs.tag is empty. It exists only in the runner's checkout.
+  SIMULATION_TAG: "v0.0.0-ci"
+
+jobs:
+  build:
+    name: Build and verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          fetch-depth: 0 # GoReleaser reads tags and commit data
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: ${{ env.GORELEASER_VERSION }}
+          install-only: true
+
+      - name: Check the GoReleaser configuration
+        run: goreleaser check
+
+      - name: Build a snapshot
+        if: inputs.tag == ''
+        run: |
+          goreleaser release --snapshot --clean
+          go run ./tools/verifydist -commit "$(git rev-parse HEAD)" -snapshot -smoke linux_amd64
+
+      - name: Build the release archives
+        id: release
+        env:
+          TAG: ${{ inputs.tag || env.SIMULATION_TAG }}
+          SIMULATE: ${{ inputs.tag == '' }}
+        run: |
+          if [ "$SIMULATE" = true ]; then
+            git tag "$TAG" # local only: the checkout has no credentials to push it
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::the checkout is not clean"
+            git status --porcelain
+            exit 1
+          fi
+          commit="$(git rev-parse HEAD)"
+          if [ "$(git rev-parse "$TAG^{commit}")" != "$commit" ]; then
+            echo "::error::$TAG does not point at the checked-out commit $commit"
+            exit 1
+          fi
+          export GORELEASER_CURRENT_TAG="$TAG"
+          goreleaser release --clean --skip=publish
+          cp dist/*_checksums.txt "$RUNNER_TEMP/first-build.txt"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the release archives
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+        run: go run ./tools/verifydist -commit "$COMMIT" -version "$VERSION" -smoke linux_amd64
+
+      - name: Check that a rebuild is byte-for-byte identical
+        env:
+          TAG: ${{ inputs.tag || env.SIMULATION_TAG }}
+        run: |
+          mv dist "$RUNNER_TEMP/dist"
+          GORELEASER_CURRENT_TAG="$TAG" goreleaser release --clean --skip=publish
+          diff "$RUNNER_TEMP/first-build.txt" dist/*_checksums.txt
+          for f in dist/*.tar.gz dist/*.zip; do
+            cmp "$f" "$RUNNER_TEMP/dist/$(basename "$f")"
+          done
+          rm -rf dist && mv "$RUNNER_TEMP/dist" dist
+          echo "rebuild produced identical archives:"
+          cat dist/*_checksums.txt
+
+      - name: Upload the verified files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-dist
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*_checksums.txt
+            dist/metadata.json
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke:
+    name: Smoke test ${{ matrix.target }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: windows_amd64, runner: windows-latest }
+          - { target: windows_arm64, runner: windows-11-arm }
+          - { target: macos_arm64, runner: macos-latest }
+          - { target: macos_amd64, runner: macos-15-intel }
+          - { target: linux_arm64, runner: ubuntu-24.04-arm }
+          # No ARMv7 runner exists; run the ARM executable under QEMU user-mode emulation.
+          - { target: linux_armv7, runner: ubuntu-latest, emulator: qemu-arm-static }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.commit }}
+          persist-credentials: false
+
+      # Runs tools/verifydist, which compares the executables' Go version with its own.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Download the verified files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Install QEMU
+        if: matrix.emulator == 'qemu-arm-static'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
+
+      - name: Run the released executable
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          COMMIT: ${{ needs.build.outputs.commit }}
+          TARGET: ${{ matrix.target }}
+          EMULATOR: ${{ matrix.emulator }}
+        run: go run ./tools/verifydist -commit "$COMMIT" -version "$VERSION" -smoke "$TARGET" -emulator "$EMULATOR"
