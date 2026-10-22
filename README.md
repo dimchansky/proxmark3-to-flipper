@@ -30,9 +30,11 @@ place the card on the antenna and run:
 hf mf autopwn
 ```
 
-This recovers the sector keys and saves the card as `hf-mf-<UID>-dump.json`
-(plus a `.bin` copy and a key file). If you already have the keys,
-`hf mf dump --keys hf-mf-<UID>-key.bin` produces the same JSON file. Use
+This tries to recover all sector keys of the card; that does not succeed for
+every card. When all keys are found, it saves the card as
+`hf-mf-<UID>-dump.json` (plus a `.bin` copy and a key file). If you already
+have the keys, `hf mf dump --keys hf-mf-<UID>-key.bin` produces the same JSON
+file. Use
 `--mini`, `--1k` or `--4k` for card sizes the client cannot detect.
 
 > **Dumps are secrets.** A dump contains the card's sector keys and data,
@@ -83,8 +85,11 @@ Flags may also be written with two dashes (`--force`).
   leaves it unchanged; add `-force` to replace it. The input file is never
   modified, and an output path that refers to the input (directly, through a
   link or a different spelling) is refused even with `-force`.
-- **Nothing is written on error.** An invalid dump never creates or changes
-  the output.
+- **Invalid input leaves the output alone.** A dump that fails validation
+  never creates or changes the output file. If writing itself fails (a full
+  disk, for example), the tool removes the incomplete file it created; the
+  rare cases where cleanup is impossible are described in
+  [docs/output-safety.md](docs/output-safety.md).
 - **Exit status:** `0` on success, `1` if the conversion or writing the file
   fails, `2` for invalid flags or arguments.
 - New output files are readable by their owner only on Linux and macOS. On
