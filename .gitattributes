@@ -1,3 +1,6 @@
 # Golden files are compared byte for byte; keep LF line endings on every platform.
 testdata/** text eol=lf
 *.go text eol=lf
+# Packed into the release archives; keep them identical whatever OS builds them.
+LICENSE text eol=lf
+README.md text eol=lf

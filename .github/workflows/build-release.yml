@@ -160,3 +160,42 @@ jobs:
           TARGET: ${{ matrix.target }}
           EMULATOR: ${{ matrix.emulator }}
         run: go run ./tools/verifydist -commit "$COMMIT" -version "$VERSION" -smoke "$TARGET" -emulator "$EMULATOR"
+
+      # The installation commands from README.md, run as written.
+      - name: Follow the README (Linux, macOS)
+        if: runner.os != 'Windows' && matrix.emulator == ''
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir readme && cd readme
+          cp "../dist/proxmark3-to-flipper_${VERSION}_${TARGET}.tar.gz" "../dist/proxmark3-to-flipper_${VERSION}_checksums.txt" .
+          if [ "$RUNNER_OS" = macOS ]; then
+            shasum -a 256 --check --ignore-missing "proxmark3-to-flipper_${VERSION}_checksums.txt"
+          else
+            sha256sum --check --ignore-missing "proxmark3-to-flipper_${VERSION}_checksums.txt"
+          fi
+          tar -xzf "proxmark3-to-flipper_${VERSION}_${TARGET}.tar.gz"
+          ./proxmark3-to-flipper -version
+
+      - name: Follow the README (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          New-Item -ItemType Directory readme | Out-Null
+          Set-Location readme
+          $archive = "proxmark3-to-flipper_$($env:VERSION)_$($env:TARGET).zip"
+          $sums = "proxmark3-to-flipper_$($env:VERSION)_checksums.txt"
+          Copy-Item "..\dist\$archive", "..\dist\$sums" .
+          $expected = (Select-String -SimpleMatch "  $archive" $sums).Line.Split(" ")[0]
+          $ok = (Get-FileHash $archive -Algorithm SHA256).Hash -eq $expected
+          Write-Output $ok
+          if (-not $ok) { throw "checksum mismatch for $archive" }
+          Expand-Archive $archive -DestinationPath proxmark3-to-flipper
+          .\proxmark3-to-flipper\proxmark3-to-flipper.exe -version
+          if ($LASTEXITCODE -ne 0) { throw "-version exited with $LASTEXITCODE" }
