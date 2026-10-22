@@ -73,6 +73,7 @@ jobs:
 
   lint:
     name: Lint
+    if: false # temporary: verifies that a skipped required job fails CI Required
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
