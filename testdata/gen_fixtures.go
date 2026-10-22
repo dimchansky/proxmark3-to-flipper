@@ -65,8 +65,7 @@ var fixtures = []fixture{
 	// Same card as mfcard-1k-uid4.json in the newer Proxmark3 file types.
 	{json: "mfc-v2-1k-uid4.json", fileType: "mfc v2", card: card1K},
 	{json: "mfc-v3-1k-uid4.json", fileType: "mfc v3", card: withSignature(card1K)},
-	// Expected output for a converter that supports MIFARE Classic Mini.
-	{json: "mfcard-mini-uid4.json", fileType: "mfcard", card: cardMin, nfc: "mfc-mini-uid4.expected.nfc"},
+	{json: "mfcard-mini-uid4.json", fileType: "mfcard", card: cardMin, nfc: "mfc-mini-uid4.nfc"},
 	// MIFARE Classic 2K has no Flipper representation.
 	{json: "mfcard-2k-uid4.json", fileType: "mfcard", card: card2K},
 }

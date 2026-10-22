@@ -140,8 +140,8 @@ func TestCLI_Convert(t *testing.T) {
 			if res.code != 0 {
 				t.Fatalf("exit code = %d, want 0; stderr:\n%s", res.code, res.stderr)
 			}
-			if res.stdout != "" || res.stderr != "" {
-				t.Errorf("successful conversion printed stdout %q, stderr %q; want no output", res.stdout, res.stderr)
+			if res.stdout != "" || res.stderr != tt.stderr {
+				t.Errorf("successful conversion printed stdout %q, stderr %q; want stderr %q", res.stdout, res.stderr, tt.stderr)
 			}
 			assertSameText(t, tt.golden, readFile(t, out), readFile(t, tt.golden))
 			// The input must be left untouched.
@@ -254,13 +254,18 @@ func TestCLI_InputErrors(t *testing.T) {
 		wantErr string
 	}{
 		{name: "nonexistent input", input: nil, wantErr: "error: failed to parse Proxmark3 dump file '"},
-		{name: "empty file", input: strPtr(""), wantErr: "error: failed to decode Proxmark3 JSON file: EOF\n"},
-		{name: "malformed JSON", input: strPtr(valid[:len(valid)/2]), wantErr: "error: failed to decode Proxmark3 JSON file: "},
+		{name: "empty file", input: strPtr(""), wantErr: "error: failed to decode Proxmark3 JSON file at byte offset 0: unexpected end of JSON input\n"},
+		{name: "malformed JSON", input: strPtr(valid[:len(valid)/2]), wantErr: "error: failed to decode Proxmark3 JSON file at byte offset "},
+		{name: "trailing data", input: strPtr(valid + "{}"), wantErr: "error: failed to decode Proxmark3 JSON file at byte offset "},
+		{name: "duplicate block", input: strPtr(strings.Replace(valid, `"7": "`, `"6": "00", "7": "`, 1)), wantErr: `error: failed to decode Proxmark3 JSON file: duplicate key "6" in blocks` + "\n"},
 		{name: "not produced by Proxmark3", input: strPtr(strings.Replace(valid, `"proxmark3"`, `"other"`, 1)), wantErr: "error: JSON file must be produced by Proxmark3\n"},
-		{name: "not a MIFARE Classic dump", input: strPtr(strings.Replace(valid, `"mfcard"`, `"mfu"`, 1)), wantErr: "error: expecting Mifare card dump\n"},
-		{name: "invalid UID hex", input: strPtr(strings.Replace(valid, `"11223344"`, `"XX223344"`, 1)), wantErr: "error: cannot parse card UID: "},
-		{name: "invalid block hex", input: strPtr(strings.Replace(valid, `"0102030405060708090A0B0C0D0E0F10"`, `"0102030405060708090A0B0C0D0E0F1"`, 1)), wantErr: "error: cannot parse block 1 data: "},
-		{name: "missing block index", input: strPtr(strings.Replace(valid, `"7": "`, `"700": "`, 1)), wantErr: "error: cannot find Mifare card data for block 7\n"},
+		{name: "not a MIFARE Classic dump", input: strPtr(strings.Replace(valid, `"mfcard"`, `"mfu"`, 1)), wantErr: `error: unsupported FileType "mfu", expecting a MIFARE Classic dump ("mfcard", "mfc v2" or "mfc v3")` + "\n"},
+		{name: "invalid UID hex", input: strPtr(strings.Replace(valid, `"11223344"`, `"XX223344"`, 1)), wantErr: "error: invalid Card.UID: invalid hexadecimal character at offset 0: "},
+		{name: "invalid block hex", input: strPtr(strings.Replace(valid, `"0102030405060708090A0B0C0D0E0F10"`, `"0102030405060708090A0B0C0D0E0F1"`, 1)), wantErr: "error: invalid block 1: odd number of hexadecimal digits (31): "},
+		{name: "missing block index", input: strPtr(strings.Replace(valid, `"7": "`, `"700": "`, 1)), wantErr: "error: missing block 7\n"},
+		{name: "invalid block index", input: strPtr(strings.Replace(valid, `"7": "`, `"x7": "`, 1)), wantErr: `error: invalid block index "x7": want a decimal number without sign or leading zeros` + "\n"},
+		{name: "2K dump", input: strPtr(string(readFile(t, fixture2K))), wantErr: "error: MIFARE Classic 2K dumps (128 blocks) are not supported: the Flipper NFC format has no 2K card type\n"},
+		{name: "oversized input", input: strPtr(valid + strings.Repeat(" ", maxInputSize)), wantErr: "error: input is larger than 1048576 bytes, too large for a MIFARE Classic dump\n"},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -289,6 +294,109 @@ func TestCLI_InputErrors(t *testing.T) {
 				t.Errorf("usage printed for a non-usage error:\n%s", res.stderr)
 			}
 			assertNoFile(t, out)
+		})
+	}
+}
+
+// An invalid dump must leave an existing output alone, even with -force,
+// and must not print the card data it rejected.
+func TestCLI_InvalidInputWithForce(t *testing.T) {
+	t.Parallel()
+
+	const secret = "A1B2C3D4E5F6"
+	valid := string(readFile(t, fixture1K))
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "invalid trailer", input: strings.Replace(valid, `"AAAAAAAAAA00FF078069BBBBBBBBBB00"`, `"`+secret+`FF078069`+secret[:11]+`Z"`, 1)},
+		{name: "short trailer", input: strings.Replace(valid, `"AAAAAAAAAA00FF078069BBBBBBBBBB00"`, `"`+secret+`FF078069`+secret[:10]+`"`, 1)},
+		{name: "2K dump", input: string(readFile(t, fixture2K))},
+		{name: "trailing data", input: valid + "x"},
+		{name: "mfc v2 without blocks", input: `{"Created":"proxmark3","FileType":"mfc v2","Card":{"UID":"11223344","ATQA":"0400","SAK":"08"}}`},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			in := filepath.Join(dir, "dump.json")
+			if err := os.WriteFile(in, []byte(tt.input), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out := filepath.Join(dir, "card.nfc")
+			writeTestFile(t, out, oldData)
+
+			res := runCLI(t, dir, "-force", "-i", in, "-o", out)
+			if res.code != 1 {
+				t.Errorf("exit code = %d, want 1", res.code)
+			}
+			if strings.Contains(strings.ToUpper(res.stderr), secret[:8]) {
+				t.Errorf("stderr repeats card data: %q", res.stderr)
+			}
+			assertContent(t, out, oldData)
+			assertDirEntries(t, dir, "card.nfc", "dump.json")
+		})
+	}
+}
+
+// The mfc v3 warning describes a finished conversion, so it must not appear
+// when the output could not be published; the output rules still hold then.
+func TestCLI_DroppedFieldsWarning(t *testing.T) {
+	t.Parallel()
+
+	t.Run("printed after a successful conversion", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		in := copyFixture(t, dir, fixtureV3)
+		out := filepath.Join(dir, "card.nfc")
+		res := runCLI(t, dir, "-i", in, "-o", out)
+		if res.code != 0 || res.stderr != warningV3 {
+			t.Fatalf("exit code %d, stderr %q; want 0 and %q", res.code, res.stderr, warningV3)
+		}
+		assertSameText(t, golden1K, readFile(t, out), readFile(t, golden1K))
+	})
+
+	failures := []struct {
+		name  string
+		setup func(t *testing.T, dir string) (args []string, keep string)
+	}{
+		{name: "existing output without -force", setup: func(t *testing.T, dir string) ([]string, string) {
+			out := filepath.Join(dir, "card.nfc")
+			writeTestFile(t, out, oldData)
+			return []string{"-o", out}, out
+		}},
+		{name: "output is the input", setup: func(t *testing.T, dir string) ([]string, string) {
+			in := filepath.Join(dir, filepath.Base(fixtureV3))
+			return []string{"-o", in, "-force"}, ""
+		}},
+		{name: "missing output directory", setup: func(t *testing.T, dir string) ([]string, string) {
+			return []string{"-o", filepath.Join(dir, "missing", "card.nfc"), "-force"}, ""
+		}},
+	}
+	for _, tt := range failures {
+		tt := tt
+		t.Run("not printed when "+tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			in := copyFixture(t, dir, fixtureV3)
+			args, keep := tt.setup(t, dir)
+			res := runCLI(t, dir, append([]string{"-i", in}, args...)...)
+			if res.code != 1 {
+				t.Errorf("exit code = %d, want 1", res.code)
+			}
+			if strings.Contains(res.stderr, "warning:") || !strings.HasPrefix(res.stderr, "error: ") {
+				t.Errorf("stderr = %q, want only the error", res.stderr)
+			}
+			assertContent(t, in, readFile(t, fixtureV3))
+			if keep != "" {
+				assertContent(t, keep, oldData)
+			}
+			names := []string{filepath.Base(fixtureV3)}
+			if keep != "" {
+				names = append(names, filepath.Base(keep))
+			}
+			assertDirEntries(t, dir, names...)
 		})
 	}
 }
