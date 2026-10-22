@@ -15,3 +15,12 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+
+# Binary written by `go build` in the repository root
+/proxmark3-to-flipper
+
+# Coverage data
+/cover/
+
+# Local working directory for real card dumps; never commit RFID dumps
+/tmp/
