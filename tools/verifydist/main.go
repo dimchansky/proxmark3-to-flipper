@@ -66,6 +66,13 @@ func (t target) archive(version string) string {
 	return fmt.Sprintf("%s_%s_%s%s", project, version, t.name, ext)
 }
 
+func (t target) platform() string {
+	if t.goarm != "" {
+		return t.goos + "/" + t.goarch + "/v" + t.goarm
+	}
+	return t.goos + "/" + t.goarch
+}
+
 func (t target) binary() string {
 	if t.goos == "windows" {
 		return project + ".exe"
@@ -177,7 +184,7 @@ func verify(opt options) ([]string, error) {
 		for _, p := range checkArchive(t, files, license, readme, version, opt.commit) {
 			report("%s: %s", name, p)
 		}
-		fmt.Printf("checked %-60s %8d bytes  %s/%s%s  sha256 %x\n", name, len(data), t.goos, t.goarch, t.goarm, sum)
+		fmt.Printf("checked %-60s %8d bytes  %-14s sha256 %x\n", name, len(data), t.platform(), sum)
 	}
 	if len(problems) > 0 || opt.smoke == "" {
 		return problems, nil
@@ -516,7 +523,11 @@ func smokeTest(t target, bin []byte, emulator, version, commit string) []string 
 		fail("existing output was changed without -force")
 	}
 	if len(problems) == 0 {
-		fmt.Printf("smoke tests passed for %s (%s/%s%s)\n", t.name, t.goos, t.goarch, t.goarm)
+		how := "natively"
+		if emulator != "" {
+			how = "under " + emulator
+		}
+		fmt.Printf("smoke tests passed for %s (%s) on a %s/%s host, run %s\n", t.name, t.platform(), runtime.GOOS, runtime.GOARCH, how)
 	}
 	return problems
 }
