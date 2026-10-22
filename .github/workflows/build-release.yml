@@ -161,7 +161,9 @@ jobs:
           EMULATOR: ${{ matrix.emulator }}
         run: go run ./tools/verifydist -commit "$COMMIT" -version "$VERSION" -smoke "$TARGET" -emulator "$EMULATOR"
 
-      # The installation commands from README.md, run as written.
+      # The installation commands from README.md, taken from the file itself and
+      # run on a good archive, an altered archive and an archive missing from
+      # the checksum file. The archive must be unpacked only in the first case.
       - name: Follow the README (Linux, macOS)
         if: runner.os != 'Windows' && matrix.emulator == ''
         shell: bash
@@ -170,15 +172,34 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          mkdir readme && cd readme
-          cp "../dist/proxmark3-to-flipper_${VERSION}_${TARGET}.tar.gz" "../dist/proxmark3-to-flipper_${VERSION}_checksums.txt" .
-          if [ "$RUNNER_OS" = macOS ]; then
-            shasum -a 256 --check --ignore-missing "proxmark3-to-flipper_${VERSION}_checksums.txt"
-          else
-            sha256sum --check --ignore-missing "proxmark3-to-flipper_${VERSION}_checksums.txt"
-          fi
-          tar -xzf "proxmark3-to-flipper_${VERSION}_${TARGET}.tar.gz"
-          ./proxmark3-to-flipper -version
+          archive="proxmark3-to-flipper_${VERSION}_${TARGET}.tar.gz"
+          sums="proxmark3-to-flipper_${VERSION}_checksums.txt"
+          awk -v heading="**$RUNNER_OS:**" '$0 == heading { found = 1; next }
+            found && $0 == "```sh" { inside = 1; next }
+            inside && $0 == "```" { exit }
+            inside { print }' README.md \
+            | sed -e "s/VERSION/$VERSION/g" -e "s/linux_amd64/$TARGET/g" -e "s/macos_arm64/$TARGET/g" > readme.sh
+          echo "README commands:"; cat readme.sh
+          grep -q "$archive" readme.sh || { echo "::error::README commands do not name $archive"; exit 1; }
+
+          for case in good altered missing; do
+            mkdir "$case"
+            cp "dist/$archive" "dist/$sums" "$case/"
+            case "$case" in
+              altered) printf 'x' >> "$case/$archive" ;;
+              missing) grep -v -F "  $archive" "dist/$sums" > "$case/$sums" ;;
+            esac
+            status=0
+            (cd "$case" && bash ../readme.sh) > "$case.log" 2>&1 || status=$?
+            echo "--- $case: exit $status"; cat "$case.log"
+            if [ "$case" = good ]; then
+              if [ "$status" -ne 0 ] || [ ! -x good/proxmark3-to-flipper ] || ! grep -q "^proxmark3-to-flipper v$VERSION " good.log; then
+                echo "::error::the README commands failed on a good archive"; exit 1
+              fi
+            elif [ "$status" -eq 0 ] || [ -e "$case/proxmark3-to-flipper" ]; then
+              echo "::error::the README commands did not stop on an $case checksum"; exit 1
+            fi
+          done
 
       - name: Follow the README (Windows)
         if: runner.os == 'Windows'
@@ -187,15 +208,31 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
           TARGET: ${{ matrix.target }}
         run: |
-          New-Item -ItemType Directory readme | Out-Null
-          Set-Location readme
+          $ErrorActionPreference = "Stop"
           $archive = "proxmark3-to-flipper_$($env:VERSION)_$($env:TARGET).zip"
           $sums = "proxmark3-to-flipper_$($env:VERSION)_checksums.txt"
-          Copy-Item "..\dist\$archive", "..\dist\$sums" .
-          $expected = (Select-String -SimpleMatch "  $archive" $sums).Line.Split(" ")[0]
-          $ok = (Get-FileHash $archive -Algorithm SHA256).Hash -eq $expected
-          Write-Output $ok
-          if (-not $ok) { throw "checksum mismatch for $archive" }
-          Expand-Archive $archive -DestinationPath proxmark3-to-flipper
-          .\proxmark3-to-flipper\proxmark3-to-flipper.exe -version
-          if ($LASTEXITCODE -ne 0) { throw "-version exited with $LASTEXITCODE" }
+          $m = [regex]::Match((Get-Content -Raw README.md), '(?s)\*\*Windows \(PowerShell\):\*\*\s*```powershell\r?\n(.*?)```')
+          if (-not $m.Success) { throw "no PowerShell commands in README.md" }
+          $commands = $m.Groups[1].Value.Replace("VERSION", $env:VERSION).Replace("windows_amd64", $env:TARGET)
+          Set-Content readme.ps1 $commands
+          "README commands:"; $commands
+          if (-not $commands.Contains($archive)) { throw "README commands do not name $archive" }
+
+          foreach ($case in "good", "altered", "missing") {
+            New-Item -ItemType Directory $case | Out-Null
+            Copy-Item "dist\$archive", "dist\$sums" $case
+            if ($case -eq "altered") { [IO.File]::AppendAllText("$case\$archive", "x") }
+            if ($case -eq "missing") {
+              Get-Content "dist\$sums" | Where-Object { -not $_.EndsWith("  $archive") } | Set-Content "$case\$sums"
+            }
+            Push-Location $case
+            $out = & pwsh -NoProfile -NonInteractive -File ..\readme.ps1 2>&1 | Out-String
+            Pop-Location
+            "--- $($case):"; $out
+            $unpacked = Test-Path "$case\proxmark3-to-flipper\proxmark3-to-flipper.exe"
+            if ($case -eq "good") {
+              if (-not $unpacked -or -not $out.Contains("proxmark3-to-flipper v$($env:VERSION) ")) { throw "the README commands failed on a good archive" }
+            } elseif ($unpacked -or -not $out.Contains("Checksum missing or wrong")) {
+              throw "the README commands did not stop on an $case checksum"
+            }
+          }

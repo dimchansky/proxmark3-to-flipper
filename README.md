@@ -63,23 +63,23 @@ The binaries need Windows 10 or later and macOS 13 or later. Each archive
 contains the executable, this README and the license.
 
 Download the archive and `proxmark3-to-flipper_VERSION_checksums.txt` into one
-folder, check the archive, then unpack it. Replace `VERSION` (for example
+folder, check the archive, and unpack it only if the check passes. Replace `VERSION` (for example
 `1.0.0`) and the system name as needed.
 
 **Linux:**
 
 ```sh
-sha256sum --check --ignore-missing proxmark3-to-flipper_VERSION_checksums.txt
-tar -xzf proxmark3-to-flipper_VERSION_linux_amd64.tar.gz
-./proxmark3-to-flipper -version
+sha256sum --check --ignore-missing proxmark3-to-flipper_VERSION_checksums.txt &&
+  tar -xzf proxmark3-to-flipper_VERSION_linux_amd64.tar.gz &&
+  ./proxmark3-to-flipper -version
 ```
 
 **macOS:**
 
 ```sh
-shasum -a 256 --check --ignore-missing proxmark3-to-flipper_VERSION_checksums.txt
-tar -xzf proxmark3-to-flipper_VERSION_macos_arm64.tar.gz
-./proxmark3-to-flipper -version
+shasum -a 256 --check --ignore-missing proxmark3-to-flipper_VERSION_checksums.txt &&
+  tar -xzf proxmark3-to-flipper_VERSION_macos_arm64.tar.gz &&
+  ./proxmark3-to-flipper -version
 ```
 
 The binaries are not signed by Apple. If macOS refuses to open a file
@@ -90,11 +90,16 @@ checksum: `xattr -d com.apple.quarantine proxmark3-to-flipper`.
 
 ```powershell
 $archive = "proxmark3-to-flipper_VERSION_windows_amd64.zip"
-$expected = (Select-String -SimpleMatch "  $archive" proxmark3-to-flipper_VERSION_checksums.txt).Line.Split(" ")[0]
-(Get-FileHash $archive -Algorithm SHA256).Hash -eq $expected   # must print True
-Expand-Archive $archive -DestinationPath proxmark3-to-flipper
-.\proxmark3-to-flipper\proxmark3-to-flipper.exe -version
+$entry = Select-String -SimpleMatch "  $archive" proxmark3-to-flipper_VERSION_checksums.txt
+if ($entry -and (Get-FileHash $archive -Algorithm SHA256).Hash -eq $entry.Line.Split(" ")[0]) {
+    Expand-Archive $archive -DestinationPath proxmark3-to-flipper
+    .\proxmark3-to-flipper\proxmark3-to-flipper.exe -version
+} else {
+    Write-Error "Checksum missing or wrong: do not use $archive"
+}
 ```
+
+The archive is unpacked only if its checksum is listed and matches.
 
 Move the executable to a folder on your `PATH` to run it from anywhere.
 
