@@ -80,9 +80,11 @@ func assertContent(t *testing.T, name string, want []byte) {
 	}
 }
 
-// assertOwnerOnly checks the mode of a file created by writeOutputFile. On
-// Windows Go maps permissions to the read-only attribute only, so the file is
-// expected to be writable and access is left to the inherited ACLs.
+// assertOwnerOnly checks the mode of a file created by writeOutputFile: no
+// access for group or others, and nothing beyond owner read/write. A umask may
+// remove more bits, so a stricter mode is accepted. On Windows Go maps
+// permissions to the read-only attribute only, so the file is expected to be
+// writable and access is left to the inherited ACLs.
 func assertOwnerOnly(t *testing.T, name string) {
 	t.Helper()
 	perm := statFile(t, name).Mode().Perm()
@@ -93,8 +95,8 @@ func assertOwnerOnly(t *testing.T, name string) {
 		t.Logf("Windows reports mode %v; access is controlled by inherited ACLs", perm)
 		return
 	}
-	if perm != outputPerm {
-		t.Errorf("%s has mode %v, want %v", name, perm, outputPerm)
+	if perm&^outputPerm != 0 {
+		t.Errorf("%s has mode %v, want no permissions beyond %v", name, perm, outputPerm)
 	}
 }
 

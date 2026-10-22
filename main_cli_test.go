@@ -434,4 +434,56 @@ func TestCLI_OutputPermissions(t *testing.T) {
 	assertDirEntries(t, dir, filepath.Base(in), "card.nfc")
 }
 
+// The mode of a new output must not depend on the caller's umask being
+// restrictive. Each umask is set in a shell that then runs the CLI, so the
+// umask of the test process is never changed.
+func TestCLI_OutputPermissionsUnderUmask(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("umask does not apply on Windows")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no POSIX shell: %v", err)
+	}
+	cli := buildCLI(t)
+
+	tests := []struct {
+		umask string
+		want  os.FileMode
+	}{
+		{umask: "000", want: 0o600}, // the program itself must not grant more
+		{umask: "022", want: 0o600},
+		{umask: "077", want: 0o600},
+		{umask: "277", want: 0o400}, // a stricter umask is honored
+	}
+	for _, tt := range tests {
+		tt := tt
+		for _, force := range []bool{false, true} {
+			force := force
+			t.Run("umask "+tt.umask+"/"+forceName(force), func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				in := copyFixture(t, dir, fixture1K)
+				out := filepath.Join(dir, "card.nfc")
+				if force {
+					writeTestFile(t, out, oldData)
+				}
+				args := []string{"-c", `umask "$1" && shift && exec "$@"`, "sh", tt.umask, cli, "-i", in, "-o", out}
+				if force {
+					args = append(args, "-force")
+				}
+				cmd := exec.Command(sh, args...)
+				cmd.Dir = dir
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("conversion failed: %v\n%s", err, output)
+				}
+				if perm := statFile(t, out).Mode().Perm(); perm != tt.want {
+					t.Errorf("mode = %v, want %v", perm, tt.want)
+				}
+			})
+		}
+	}
+}
+
 func strPtr(s string) *string { return &s }
